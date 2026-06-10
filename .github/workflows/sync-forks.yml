@@ -17,27 +17,29 @@ jobs:
           synced=0; uptodate=0; failed=0
           failures=""
 
-          # List all forks owned by the authenticated user
+          # List all forks the token can access (personal + org), keyed by real owner
           forks=$(gh api user/repos --paginate \
-            --jq '.[] | select(.fork==true) | "\(.name) \(.default_branch)"')
+            --jq '.[] | select(.fork==true) | "\(.owner.login) \(.name) \(.default_branch)"')
 
-          while read -r name branch; do
+          while read -r owner name branch; do
             [ -z "$name" ] && continue
-            result=$(gh api --method POST "repos/${GITHUB_REPOSITORY_OWNER}/${name}/merge-upstream" \
+            result=$(gh api --method POST "repos/${owner}/${name}/merge-upstream" \
               --field branch="$branch" --jq '.message' 2>&1) && ok=1 || ok=0
 
             if [ "$ok" = "1" ]; then
               if echo "$result" | grep -q "not behind"; then
-                echo "⏭️  $name — already up to date"
+                echo "⏭️  $owner/$name — already up to date"
                 uptodate=$((uptodate+1))
               else
-                echo "✅ $name — synced"
+                echo "✅ $owner/$name — synced"
                 synced=$((synced+1))
               fi
+            elif echo "$result" | grep -q "dmca"; then
+              echo "🚫 $owner/$name — DMCA blocked, skipped"
             else
-              echo "❌ $name — $result"
+              echo "❌ $owner/$name — $result"
               failed=$((failed+1))
-              failures="$failures\n- $name: $(echo "$result" | head -c 120)"
+              failures="$failures\n- $owner/$name: $(echo "$result" | head -c 120)"
             fi
           done <<< "$forks"
 
