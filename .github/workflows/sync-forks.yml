@@ -1,0 +1,63 @@
+name: Sync All Forks
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday 6am UTC
+  workflow_dispatch:        # Manual trigger from Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync every fork with its upstream
+        env:
+          GH_TOKEN: ${{ secrets.FORK_SYNC_PAT }}
+        run: |
+          synced=0; uptodate=0; failed=0
+          failures=""
+
+          # List all forks owned by the authenticated user
+          forks=$(gh api user/repos --paginate \
+            --jq '.[] | select(.fork==true) | "\(.name) \(.default_branch)"')
+
+          while read -r name branch; do
+            [ -z "$name" ] && continue
+            result=$(gh api --method POST "repos/${GITHUB_REPOSITORY_OWNER}/${name}/merge-upstream" \
+              --field branch="$branch" --jq '.message' 2>&1) && ok=1 || ok=0
+
+            if [ "$ok" = "1" ]; then
+              if echo "$result" | grep -q "not behind"; then
+                echo "⏭️  $name — already up to date"
+                uptodate=$((uptodate+1))
+              else
+                echo "✅ $name — synced"
+                synced=$((synced+1))
+              fi
+            else
+              echo "❌ $name — $result"
+              failed=$((failed+1))
+              failures="$failures\n- $name: $(echo "$result" | head -c 120)"
+            fi
+          done <<< "$forks"
+
+          echo ""
+          echo "═══════════════════════════════════"
+          echo "📊 Summary: $synced synced · $uptodate up-to-date · $failed failed"
+          echo "═══════════════════════════════════"
+
+          # Write to job summary (visible in Actions UI)
+          {
+            echo "## 🔄 Fork Sync Report"
+            echo ""
+            echo "| Result | Count |"
+            echo "|--------|-------|"
+            echo "| ✅ Synced | $synced |"
+            echo "| ⏭️ Already up to date | $uptodate |"
+            echo "| ❌ Failed | $failed |"
+            if [ -n "$failures" ]; then
+              echo ""
+              echo "### Failures"
+              echo -e "$failures"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
